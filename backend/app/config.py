@@ -9,6 +9,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 默认值；用户可以在 .env 中以逗号分隔字符串形式覆盖（无需 JSON 包裹）
+_DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://localhost,http://127.0.0.1:3000"
+
+
+def _parse_csv(value: str) -> List[str]:
+    """把逗号分隔字符串切分为列表。"""
+    if not value:
+        return []
+    return [s.strip() for s in value.split(",") if s.strip()]
+
 
 class Settings(BaseSettings):
     """全局配置。"""
@@ -22,11 +32,13 @@ class Settings(BaseSettings):
     # 服务
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: List[str] = [
-        "http://localhost:5173",
-        "http://localhost",
-        "http://127.0.0.1:5173",
-    ]
+
+    # 注意：.env 中的 CORS_ORIGINS 用逗号分隔字符串，如
+    # CORS_ORIGINS=http://localhost:3000,http://localhost
+    # 这里用 str 接收，在 cors_origins_list 属性里再切分。
+    # 原因：pydantic-settings 的 DotEnvSource 默认会把 List[str] 当 JSON 解析，
+    # 而用户写的是非 JSON 的纯字符串，会触发 JSONDecodeError。
+    cors_origins: str = _DEFAULT_CORS_ORIGINS
 
     # AI
     ai_provider: str = "openai"  # openai | ollama
@@ -47,6 +59,11 @@ class Settings(BaseSettings):
     # 存储
     events_dir: Path = BASE_DIR / "data" / "events"
     db_path: Path = BASE_DIR / "data" / "markthedate.db"
+
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """返回 cors_origins 的列表形式，供 CORS 中间件使用。"""
+        return _parse_csv(self.cors_origins)
 
     def ensure_dirs(self) -> None:
         """确保数据目录存在。"""
