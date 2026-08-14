@@ -1,0 +1,24 @@
+# 后端
+__pycache__/
+*.pyc
+.venv/
+backend/.env
+backend/data/markthedate.db
+backend/data/markthedate.db-*
+backend/data/events/*
+
+# 前端
+node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/npm-debug.log*
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# 临时
+*.log
