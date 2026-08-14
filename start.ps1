@@ -5,7 +5,7 @@
 .DESCRIPTION
   - Creates a backend virtual environment and installs dependencies (first run)
   - Copies .env.example to .env (if missing)
-  - Starts backend (uvicorn :8000) and frontend (vite :5173) as background jobs
+  - Starts backend (uvicorn :8000) and frontend (vite :3000) as background jobs
   - Opens the browser to the frontend
   - Cleans up child processes on exit
 
@@ -34,7 +34,7 @@ $frontendDir = Join-Path $root "frontend"
 $venvDir     = Join-Path $backendDir ".venv"
 $venvPython  = Join-Path $venvDir "Scripts\python.exe"
 $venvUvicorn = Join-Path $venvDir "Scripts\uvicorn.exe"
-$frontendUrl = "http://localhost:5173"
+$frontendUrl = "http://localhost:3000"
 $backendUrl  = "http://localhost:8000"
 
 # ---- Output helpers (ASCII-only strings) ----

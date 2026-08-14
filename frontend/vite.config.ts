@@ -10,8 +10,11 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
-    host: '0.0.0.0',
+    port: 3000,
+    // 监听 127.0.0.1 而不是 0.0.0.0，避免在受限 Windows 环境下 EACCES
+    // 如果需要局域网/容器访问，改回 '0.0.0.0' 即可
+    host: '127.0.0.1',
+    strictPort: false, // 端口被占时自动切换到下一个可用端口
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

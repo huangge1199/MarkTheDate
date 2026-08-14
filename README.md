@@ -79,7 +79,7 @@ MarkTheDate/
 ```
 ============================================
  MarkTheDate 已在运行
-   前端: http://localhost:5173
+   前端: http://localhost:3000
    后端: http://localhost:8000
    API 文档: http://localhost:8000/docs
  按 Ctrl+C 退出，进程将被清理
@@ -102,7 +102,7 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
-# 打开 http://localhost:5173
+# 打开 http://localhost:3000
 ```
 
 ### 方式三：Docker
@@ -110,7 +110,7 @@ npm run dev
 ```bash
 cp .env.example .env       # 填入 AI key / SMTP
 docker compose up -d --build
-# 前端 http://localhost:5173  后端 http://localhost:8000
+# 前端 http://localhost:3000  后端 http://localhost:8000
 ```
 
 ## 数据存储示例

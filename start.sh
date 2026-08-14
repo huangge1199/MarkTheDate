@@ -4,7 +4,7 @@
 # 功能：
 #   - 创建后端虚拟环境并安装依赖（首次）
 #   - 复制 .env.example 为 .env（首次）
-#   - 后台启动后端 (uvicorn :8000) 与前端 (vite :5173)
+#   - 后台启动后端 (uvicorn :8000) 与前端 (vite :3000)
 #   - 自动打开浏览器到前端页面
 #   - Ctrl+C 退出时清理子进程
 #
@@ -36,7 +36,7 @@ VENV_BIN="$VENV_DIR/bin"
 PY="$VENV_BIN/python"
 UVICORN="$VENV_BIN/uvicorn"
 BACKEND_URL="http://localhost:8000"
-FRONTEND_URL="http://localhost:5173"
+FRONTEND_URL="http://localhost:3000"
 
 # ---- 检查 Python / Node ----
 step "检查环境..."
@@ -144,7 +144,7 @@ cleanup() {
   # 兜底：按端口清理
   if command -v lsof >/dev/null 2>&1; then
     lsof -ti tcp:8000 2>/dev/null | xargs -r kill -KILL 2>/dev/null || true
-    lsof -ti tcp:5173 2>/dev/null | xargs -r kill -KILL 2>/dev/null || true
+    lsof -ti tcp:3000 2>/dev/null | xargs -r kill -KILL 2>/dev/null || true
   fi
   ok "已退出"
 }
