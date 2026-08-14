@@ -1,19 +1,31 @@
 <#
 .SYNOPSIS
-  MarkTheDate 本地一键启动脚本（Windows PowerShell 5.1+ 兼容）。
+  MarkTheDate one-click launcher (Windows PowerShell 5.1+).
 
 .DESCRIPTION
-  - 创建后端虚拟环境并安装依赖（首次运行）
-  - 复制 .env.example 为 .env（若不存在）
-  - 后台启动后端 (uvicorn :8000) 与前端 (vite :5173)
-  - 自动打开浏览器到前端页面
-  - 在脚本退出时干净关闭两个子进程
+  - Creates a backend virtual environment and installs dependencies (first run)
+  - Copies .env.example to .env (if missing)
+  - Starts backend (uvicorn :8000) and frontend (vite :5173) as background jobs
+  - Opens the browser to the frontend
+  - Cleans up child processes on exit
+
+  NOTE: This script uses ASCII-only output strings to remain compatible with
+  Windows PowerShell 5.1, which does NOT honor UTF-8 BOM and decodes .ps1 files
+  using the system OEM code page. Chinese comments above are informational and
+  do not affect runtime.
 
 .EXAMPLE
   PS> .\start.ps1
 #>
 
 $ErrorActionPreference = "Stop"
+
+# Force UTF-8 for console output so any Chinese in dynamic strings prints cleanly.
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    chcp 65001 | Out-Null
+} catch {}
+
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
@@ -25,13 +37,13 @@ $venvUvicorn = Join-Path $venvDir "Scripts\uvicorn.exe"
 $frontendUrl = "http://localhost:5173"
 $backendUrl  = "http://localhost:8000"
 
-# ---- 颜色输出 ----
+# ---- Output helpers (ASCII-only strings) ----
 function Write-Step { param($msg) Write-Host ("[*] " + $msg) -ForegroundColor Cyan }
 function Write-Ok   { param($msg) Write-Host ("[+] " + $msg) -ForegroundColor Green }
 function Write-Warn { param($msg) Write-Host ("[!] " + $msg) -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host ("[x] " + $msg) -ForegroundColor Red }
 
-# ---- 获取版本字符串 ----
+# ---- Get version string ----
 function Get-ToolVersion {
     param($binPath)
     if (-not $binPath) { return "" }
@@ -40,7 +52,7 @@ function Get-ToolVersion {
     return ($out -as [string])
 }
 
-# ---- 解析主版本号 ----
+# ---- Parse major version ----
 function Get-MajorVersion {
     param($ver)
     if (-not $ver) { return 0 }
@@ -49,17 +61,17 @@ function Get-MajorVersion {
     return [int]($clean.Split('.')[0])
 }
 
-# ---- 检查 Python / Node ----
-Write-Step "检查环境..."
+# ---- Check Python / Node ----
+Write-Step "Checking environment..."
 $python = (Get-Command python -ErrorAction SilentlyContinue).Source
 $node   = (Get-Command node   -ErrorAction SilentlyContinue).Source
 $npm    = (Get-Command npm    -ErrorAction SilentlyContinue).Source
 
-if (-not $python) { Write-Err "未检测到 python，请先安装 Python 3.10+"; exit 1 }
-if (-not $node)   { Write-Err "未检测到 node，请先安装 Node.js 18+";   exit 1 }
-if (-not $npm)    { Write-Err "未检测到 npm，请先安装 Node.js 18+";    exit 1 }
+if (-not $python) { Write-Err "python not found, please install Python 3.10+"; exit 1 }
+if (-not $node)   { Write-Err "node not found, please install Node.js 18+";     exit 1 }
+if (-not $npm)    { Write-Err "npm not found, please install Node.js 18+";      exit 1 }
 
-# ---- 版本检查 ----
+# ---- Version checks ----
 $pyVer = Get-ToolVersion -binPath $python
 $pyMaj = Get-MajorVersion -ver $pyVer
 $pyMin = & $python -c "import sys;print(sys.version_info.minor)" 2>$null
@@ -80,23 +92,23 @@ if ($nodeMaj -lt 18) {
 Write-Ok ("Node   : " + $nodeVer)
 Write-Ok ("npm    : " + (Get-ToolVersion -binPath $npm))
 
-# ---- 后端虚拟环境 ----
-Write-Step "准备后端虚拟环境..."
+# ---- Backend virtual environment ----
+Write-Step "Preparing backend virtual environment..."
 if (-not (Test-Path $venvPython)) {
-    Write-Step ("创建虚拟环境 " + $venvDir + " ...")
+    Write-Step ("Creating venv at " + $venvDir + " ...")
     & $python -m venv $venvDir
-    if ($LASTEXITCODE -ne 0) { Write-Err "创建虚拟环境失败"; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to create venv"; exit 1 }
 }
 
 if (-not (Test-Path $venvUvicorn)) {
-    Write-Step "安装后端依赖（首次会比较慢）..."
+    Write-Step "Installing backend dependencies (slow on first run)..."
     & $venvPython -m pip install --upgrade pip --quiet
-    if ($LASTEXITCODE -ne 0) { Write-Err "pip 升级失败"; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-Err "pip upgrade failed"; exit 1 }
     & $venvPython -m pip install -r (Join-Path $backendDir "requirements.txt") --quiet
-    if ($LASTEXITCODE -ne 0) { Write-Err "安装后端依赖失败"; exit 1 }
-    Write-Ok "后端依赖安装完成"
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to install backend deps"; exit 1 }
+    Write-Ok "Backend dependencies installed"
 } else {
-    Write-Ok "后端依赖已就绪"
+    Write-Ok "Backend dependencies ready"
 }
 
 # ---- .env ----
@@ -104,43 +116,43 @@ $envExample = Join-Path $backendDir ".env.example"
 $envFile    = Join-Path $backendDir ".env"
 if (-not (Test-Path $envFile) -and (Test-Path $envExample)) {
     Copy-Item $envExample $envFile
-    Write-Warn "已生成 backend\.env，请按需填入 AI Key / SMTP 配置"
+    Write-Warn "Created backend\.env from .env.example, please fill AI key / SMTP"
 }
 
-# ---- 前端依赖 ----
+# ---- Frontend dependencies ----
 $nodeModules = Join-Path $frontendDir "node_modules"
 if (-not (Test-Path $nodeModules)) {
-    Write-Step "安装前端依赖（首次会比较慢）..."
+    Write-Step "Installing frontend dependencies (slow on first run)..."
     Push-Location $frontendDir
     & npm install --no-audit --no-fund
     Pop-Location
-    if ($LASTEXITCODE -ne 0) { Write-Err "安装前端依赖失败"; exit 1 }
-    Write-Ok "前端依赖安装完成"
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to install frontend deps"; exit 1 }
+    Write-Ok "Frontend dependencies installed"
 } else {
-    Write-Ok "前端依赖已就绪"
+    Write-Ok "Frontend dependencies ready"
 }
 
-# ---- 启动后端 ----
-Write-Step ("启动后端 (" + $backendUrl + ") ...")
+# ---- Start backend ----
+Write-Step ("Starting backend (" + $backendUrl + ") ...")
 $backendJob = Start-Job -ScriptBlock {
     param($dir, $exe)
     Set-Location $dir
     & $exe uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 } -ArgumentList $backendDir, $venvUvicorn
 
-# ---- 启动前端 ----
-Write-Step ("启动前端 (" + $frontendUrl + ") ...")
+# ---- Start frontend ----
+Write-Step ("Starting frontend (" + $frontendUrl + ") ...")
 $frontendJob = Start-Job -ScriptBlock {
     param($dir)
     Set-Location $dir
     & npm run dev
 } -ArgumentList $frontendDir
 
-# ---- 等待服务就绪 ----
+# ---- Wait for HTTP ready ----
 function Wait-Http {
     param($url, $name, $timeoutSec)
     if (-not $timeoutSec) { $timeoutSec = 60 }
-    Write-Step ("等待 " + $name + " 就绪 (" + $url + ") ...")
+    Write-Step ("Waiting for " + $name + " (" + $url + ") ...")
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $ready = $false
     while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
@@ -152,45 +164,45 @@ function Wait-Http {
             $ok = $false
         }
         if ($ok) {
-            Write-Ok ($name + " 已就绪")
+            Write-Ok ($name + " ready")
             $ready = $true
             break
         }
         Start-Sleep -Seconds 1
     }
     if (-not $ready) {
-        Write-Warn ($name + " 在 " + $timeoutSec + " 秒内未响应，脚本将继续 (可查看日志排查)")
+        Write-Warn ($name + " not responding in " + $timeoutSec + "s, continuing (check logs)")
     }
     return $ready
 }
 
-$backendReady  = Wait-Http -url ($backendUrl + "/docs") -name "后端"
-$frontendReady = Wait-Http -url $frontendUrl            -name "前端"
+$backendReady  = Wait-Http -url ($backendUrl + "/docs") -name "backend"
+$frontendReady = Wait-Http -url $frontendUrl            -name "frontend"
 
-# ---- 打开浏览器 ----
-Write-Step "打开浏览器..."
+# ---- Open browser ----
+Write-Step "Opening browser..."
 try {
     Start-Process $frontendUrl
 } catch {
-    Write-Warn ("无法自动打开浏览器，请手动访问 " + $frontendUrl)
+    Write-Warn ("Could not auto-open browser, please visit " + $frontendUrl + " manually")
 }
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
-Write-Host " MarkTheDate 已在运行" -ForegroundColor Green
-Write-Host ("   前端: " + $frontendUrl) -ForegroundColor Green
-Write-Host ("   后端: " + $backendUrl)  -ForegroundColor Green
-Write-Host ("   API 文档: " + $backendUrl + "/docs") -ForegroundColor Green
-Write-Host " 按 Ctrl+C 退出，进程将被清理" -ForegroundColor Green
+Write-Host " MarkTheDate is running" -ForegroundColor Green
+Write-Host ("   Frontend : " + $frontendUrl) -ForegroundColor Green
+Write-Host ("   Backend  : " + $backendUrl)  -ForegroundColor Green
+Write-Host ("   API docs : " + $backendUrl + "/docs") -ForegroundColor Green
+Write-Host " Press Ctrl+C to stop, processes will be cleaned up" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
 
-# ---- 监听 Ctrl+C，清理子进程 ----
+# ---- Cleanup on exit ----
 $jobs = @($backendJob, $frontendJob)
 
 function Cleanup {
     Write-Host ""
-    Write-Step "正在关闭后端与前端进程..."
+    Write-Step "Stopping backend and frontend..."
     foreach ($j in $jobs) {
         if ($j -and $j.State -ne 'Completed') {
             Stop-Job $j -Force -ErrorAction SilentlyContinue
@@ -213,7 +225,7 @@ function Cleanup {
             try { $p.Kill() } catch {}
         }
     }
-    Write-Ok "已退出"
+    Write-Ok "exited"
 }
 
 try {
@@ -221,7 +233,7 @@ try {
         Start-Sleep -Seconds 2
         $alive = $jobs | Where-Object { $_.State -eq 'Running' }
         if (-not $alive) {
-            Write-Warn "所有子进程已退出，脚本结束"
+            Write-Warn "All child processes exited, script ending"
             break
         }
     }
