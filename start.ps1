@@ -33,7 +33,6 @@ $backendDir  = Join-Path $root "backend"
 $frontendDir = Join-Path $root "frontend"
 $venvDir     = Join-Path $backendDir ".venv"
 $venvPython  = Join-Path $venvDir "Scripts\python.exe"
-$venvUvicorn = Join-Path $venvDir "Scripts\uvicorn.exe"
 $frontendUrl = "http://localhost:3000"
 $backendUrl  = "http://localhost:8000"
 
@@ -100,7 +99,14 @@ if (-not (Test-Path $venvPython)) {
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to create venv"; exit 1 }
 }
 
-if (-not (Test-Path $venvUvicorn)) {
+# 验证 uvicorn 是否已安装（通过 python -m uvicorn --help 间接检查）
+$uvicornReady = $false
+try {
+    $tmp = & $venvPython -m uvicorn --help 2>&1
+    if ($LASTEXITCODE -eq 0) { $uvicornReady = $true }
+} catch { $uvicornReady = $false }
+
+if (-not $uvicornReady) {
     Write-Step "Installing backend dependencies (slow on first run)..."
     & $venvPython -m pip install --upgrade pip --quiet
     if ($LASTEXITCODE -ne 0) { Write-Err "pip upgrade failed"; exit 1 }
@@ -135,10 +141,10 @@ if (-not (Test-Path $nodeModules)) {
 # ---- Start backend ----
 Write-Step ("Starting backend (" + $backendUrl + ") ...")
 $backendJob = Start-Job -ScriptBlock {
-    param($dir, $exe)
+    param($dir, $py)
     Set-Location $dir
-    & $exe uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-} -ArgumentList $backendDir, $venvUvicorn
+    & $py -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+} -ArgumentList $backendDir, $venvPython
 
 # ---- Start frontend ----
 Write-Step ("Starting frontend (" + $frontendUrl + ") ...")
