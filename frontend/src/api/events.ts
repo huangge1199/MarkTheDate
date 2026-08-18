@@ -66,12 +66,23 @@ export function getEvent(id: string) {
   return http.get<EventDetail>(`/events/${id}`)
 }
 
-export function createEvent(payload: EventCreate) {
-  return http.post<EventDetail>('/events', payload)
+export function createEvent(
+  payload: EventCreate,
+  options?: { fetch_session_id?: string | null },
+) {
+  return http.post<EventDetail>('/events', payload, {
+    params: options?.fetch_session_id ? { fetch_session_id: options.fetch_session_id } : undefined,
+  })
 }
 
-export function updateEvent(id: string, payload: EventUpdate) {
-  return http.put<EventDetail>(`/events/${id}`, payload)
+export function updateEvent(
+  id: string,
+  payload: EventUpdate,
+  options?: { fetch_session_id?: string | null },
+) {
+  return http.put<EventDetail>(`/events/${id}`, payload, {
+    params: options?.fetch_session_id ? { fetch_session_id: options.fetch_session_id } : undefined,
+  })
 }
 
 export function deleteEvent(id: string) {

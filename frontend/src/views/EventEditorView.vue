@@ -3,6 +3,19 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
+import customParseFormat from 'dayjs/plugin/customParseFormat'
+dayjs.extend(customParseFormat)
+
+/** 把后端返回的日期/时间规范化为 el-date-picker 可接受的本地时间字符串。 */
+function normalizeDateTime(v?: string | null): string {
+  if (!v) return ''
+  const d = dayjs(v)
+  if (!d.isValid()) return ''
+  // 全天（无时分）→ 输出 YYYY-MM-DDTHH:mm:ss 占位 00:00:00，
+  // 因为 el-date-picker 的 value-format 锁定了该格式。
+  // 配合 form.all_day 来表达"仅日期"的语义。
+  return d.format('YYYY-MM-DDTHH:mm:ss')
+}
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import {
   createEvent,
@@ -41,8 +54,7 @@ const saving = ref(false)
 // URL 抓取
 const fetchUrlInput = ref('')
 const fetching = ref(false)
-const fetchDialog = ref(false)
-const fetchResult = ref<any>(null)
+const fetchSessionId = ref<string | null>(null)
 
 // AI 优化
 const optimizing = ref(false)
@@ -121,15 +133,18 @@ async function save() {
     .map((s) => s.trim())
     .filter(Boolean)
   saving.value = true
+  // 抓取会话 id：保存时让后端把临时图片搬到 events 目录
+  const sid = fetchSessionId.value
   try {
     if (editing.value) {
-      await updateEvent(editing.value.id, form.value)
+      await updateEvent(editing.value.id, form.value, { fetch_session_id: sid })
       ElMessage.success('已保存')
     } else {
-      const created = await createEvent(form.value)
+      const created = await createEvent(form.value, { fetch_session_id: sid })
       ElMessage.success('已创建')
       router.replace({ name: 'event-edit', params: { id: created.id } })
     }
+    fetchSessionId.value = null
   } catch (e: any) {
     ElMessage.error(e.message)
   } finally {
@@ -167,8 +182,8 @@ async function doFetch() {
   fetching.value = true
   try {
     const r = await fetchUrl(fetchUrlInput.value)
-    fetchResult.value = r
-    fetchDialog.value = true
+    fetchSessionId.value = r.session_id || null
+    applyFetch(r)
   } catch (e: any) {
     ElMessage.error(e.message)
   } finally {
@@ -176,18 +191,16 @@ async function doFetch() {
   }
 }
 
-function applyFetch() {
-  if (!fetchResult.value) return
-  const r = fetchResult.value
-  form.value.title = r.title
-  if (r.start) form.value.start = dayjs(r.start).format('YYYY-MM-DDTHH:mm:ss')
-  if (r.end) form.value.end = dayjs(r.end).format('YYYY-MM-DDTHH:mm:ss')
-  form.value.all_day = r.all_day
-  form.value.tags = r.tags || []
+function applyFetch(r: any) {
+  if (!r) return
+  form.value.title = r.title || form.value.title
+  if (r.start) form.value.start = normalizeDateTime(r.start)
+  if (r.end) form.value.end = normalizeDateTime(r.end)
+  form.value.all_day = !!r.all_day
+  form.value.tags = r.tags || form.value.tags || []
   tagsInput.value = (r.tags || []).join(', ')
-  form.value.source_url = r.source_url
-  content.value = r.content
-  fetchDialog.value = false
+  form.value.source_url = r.source_url ?? form.value.source_url
+  content.value = r.content ?? content.value
   ElMessage.success('已填入表单，请确认后保存')
 }
 
@@ -337,23 +350,6 @@ onMounted(() => {
         <MarkdownEditor v-model="content" :height="560" />
       </div>
     </div>
-
-    <!-- 抓取结果预览 -->
-    <el-dialog v-model="fetchDialog" title="抓取结果预览" width="640">
-      <div v-if="fetchResult">
-        <p><b>标题：</b>{{ fetchResult.title }}</p>
-        <p><b>开始：</b>{{ fetchResult.start || '—' }}</p>
-        <p><b>结束：</b>{{ fetchResult.end || '—' }}</p>
-        <p><b>标签：</b>{{ (fetchResult.tags || []).join(', ') || '—' }}</p>
-        <p><b>置信度：</b>{{ fetchResult.confidence }}</p>
-        <el-divider>Markdown 内容预览</el-divider>
-        <pre class="preview">{{ fetchResult.content }}</pre>
-      </div>
-      <template #footer>
-        <el-button @click="fetchDialog = false">取消</el-button>
-        <el-button type="primary" @click="applyFetch">填入表单</el-button>
-      </template>
-    </el-dialog>
 
     <!-- AI 优化结果 -->
     <el-dialog v-model="aiDialog" title="AI 优化结果" width="900">
