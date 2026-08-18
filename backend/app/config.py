@@ -33,11 +33,6 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # 注意：.env 中的 CORS_ORIGINS 用逗号分隔字符串，如
-    # CORS_ORIGINS=http://localhost:3000,http://localhost
-    # 这里用 str 接收，在 cors_origins_list 属性里再切分。
-    # 原因：pydantic-settings 的 DotEnvSource 默认会把 List[str] 当 JSON 解析，
-    # 而用户写的是非 JSON 的纯字符串，会触发 JSONDecodeError。
     cors_origins: str = _DEFAULT_CORS_ORIGINS
 
     # AI
@@ -56,19 +51,40 @@ class Settings(BaseSettings):
     smtp_pass: str = ""
     smtp_from: str = ""
 
-    # 存储
-    events_dir: Path = BASE_DIR / "data" / "events"
+    # 存储后端：s3（默认，兼容 rustfs / MinIO / AWS S3）| local（本地 data/）
+    storage_backend: str = "s3"
+    storage_local_root: Path = BASE_DIR / "data"
+
+    # SQLite 数据库 + URL 抓取临时目录仍在本地
     db_path: Path = BASE_DIR / "data" / "markthedate.db"
+    tmp_dir: Path = BASE_DIR / "data" / "tmp"
+
+    # S3 / rustfs 配置
+    s3_endpoint_url: str = ""  # 如 http://localhost:9000
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_bucket: str = "markthedate"
+    s3_region: str = "us-east-1"
+    s3_path_style: bool = True  # rustfs / MinIO 必须 True；AWS 默认 False
+    s3_public_base_url: str = ""  # 若桶可公开访问或经过 CDN，可填此 URL 直链
+    s3_presign_expires: int = 3600  # 预签名 URL 时效
+
+    @property
+    def fetch_tmp_dir(self) -> Path:
+        """URL 抓取的临时文件目录（图片等，仅 local 模式使用）。"""
+        return self.tmp_dir / "fetch"
 
     @property
     def cors_origins_list(self) -> List[str]:
-        """返回 cors_origins 的列表形式，供 CORS 中间件使用。"""
         return _parse_csv(self.cors_origins)
 
     def ensure_dirs(self) -> None:
-        """确保数据目录存在。"""
-        self.events_dir.mkdir(parents=True, exist_ok=True)
+        """确保本地数据目录存在（数据库、抓取临时目录）。"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        self.fetch_tmp_dir.mkdir(parents=True, exist_ok=True)
+        if self.storage_backend == "local":
+            self.storage_local_root.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

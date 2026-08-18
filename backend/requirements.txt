@@ -16,3 +16,4 @@ python-dotenv==1.0.1
 ulid-py==1.1.0
 python-dateutil==2.9.0.post0
 loguru==0.7.3
+boto3==1.35.0

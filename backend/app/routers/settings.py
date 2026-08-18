@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from ..config import settings
-from ..database import get_session
+from ..database import engine, get_session
 from ..models.event import Setting as SettingModel
 from ..schemas.settings import SettingsOut, SettingsUpdate
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
 def _get(key: str, default: str = "") -> str:
-    with Session(__import__("..database", fromlist=["engine"]).engine) as s:
+    with Session(engine) as s:
         row = s.exec(select(SettingModel).where(SettingModel.key == key)).first()
         if row and row.value is not None:
             return row.value
@@ -24,8 +24,6 @@ def _get(key: str, default: str = "") -> str:
 
 
 def _set(key: str, value: str) -> None:
-    from ..database import engine
-
     with Session(engine) as s:
         row = s.exec(select(SettingModel).where(SettingModel.key == key)).first()
         if row:
