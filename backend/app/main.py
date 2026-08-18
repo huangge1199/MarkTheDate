@@ -28,6 +28,14 @@ async def _email_scan_job():
         logger.exception("Email scan error: {}", e)
 
 
+def _tmp_cleanup_job():
+    """定时任务：清理超过 1 小时的抓取临时 session。"""
+    try:
+        fetch.cleanup_stale_sessions(max_age_seconds=3600)
+    except Exception as e:
+        logger.exception("tmp cleanup error: {}", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -36,6 +44,12 @@ async def lifespan(app: FastAPI):
         _email_scan_job,
         IntervalTrigger(minutes=1),
         id="email_scan",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _tmp_cleanup_job,
+        IntervalTrigger(minutes=10),
+        id="tmp_cleanup",
         replace_existing=True,
     )
     scheduler.start()
@@ -68,6 +82,7 @@ def root():
 
 
 app.include_router(events.router)
+app.include_router(events.files_router)
 app.include_router(calendar.router)
 app.include_router(fetch.router)
 app.include_router(ai.router)
