@@ -25,6 +25,9 @@ class FetchResponse(BaseModel):
     content: str = Field(default="", description="Markdown 格式的描述")
     raw_html_excerpt: str = Field(default="", description="原文片段，便于追溯")
     confidence: Literal["high", "medium", "low"] = "medium"
+    # 抓取会话 id。前端拿到后可在保存事件时传给后端，
+    # 由后端把临时图片搬到 events 目录；丢弃时直接删除该 session 目录。
+    session_id: Optional[str] = None
 
 
 class AIOptimizeRequest(BaseModel):
