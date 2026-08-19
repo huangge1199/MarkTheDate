@@ -351,13 +351,179 @@ class S3Storage(Storage):
 _storage: Optional[Storage] = None
 
 
+class FallbackStorage(Storage):
+    """S3 优先，失败时自动回落本地存储的组合后端。
+
+    主要用于：用户在 .env 中保留了 s3 配置但服务端当前不可达，
+    让 CRUD 操作不直接 500，而是悄悄改写到本地 data/ 目录。
+    """
+
+    def __init__(self, primary: Storage, fallback: Storage) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    @staticmethod
+    def _is_connection_error(exc: BaseException) -> bool:
+        """判断异常是否属于"连通性问题"。"""
+        # boto3 在不可达时会抛 botocore.exceptions.EndpointConnectionError /
+        # ConnectionError / OSError 等；这里用名字粗略判断
+        name = exc.__class__.__name__
+        if name in {
+            "EndpointConnectionError",
+            "ConnectTimeoutError",
+            "ReadTimeoutError",
+            "ConnectionError",
+            "ConnectionClosedError",
+            "SSLError",
+            "OSError",
+        }:
+            return True
+        # urllib3 的底层异常
+        msg = str(exc).lower()
+        if any(
+            k in msg
+            for k in (
+                "connection refused",
+                "could not connect",
+                "timed out",
+                "timeout",
+                "name or service not known",
+                "no route to host",
+                "failed to establish",
+                "network is unreachable",
+            )
+        ):
+            return True
+        return False
+
+    # ---- 写入 ----
+    def put_bytes(self, key: str, data: bytes, content_type: Optional[str] = None) -> None:
+        try:
+            self._primary.put_bytes(key, data, content_type)
+            return
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning(
+                "primary storage unavailable for put_bytes({}), fallback to local: {}",
+                key, e,
+            )
+        self._fallback.put_bytes(key, data, content_type)
+
+    def put_file(self, key: str, src_path: Path, content_type: Optional[str] = None) -> None:
+        try:
+            self._primary.put_file(key, src_path, content_type)
+            return
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning(
+                "primary storage unavailable for put_file({}), fallback to local: {}",
+                key, e,
+            )
+        self._fallback.put_file(key, src_path, content_type)
+
+    # ---- 读取 ----
+    def get_bytes(self, key: str) -> bytes:
+        try:
+            return self._primary.get_bytes(key)
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning("primary get_bytes({}) failed, fallback to local: {}", key, e)
+            return self._fallback.get_bytes(key)
+
+    def open_read(self, key: str) -> BinaryIO:
+        try:
+            return self._primary.open_read(key)
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning("primary open_read({}) failed, fallback to local: {}", key, e)
+            return self._fallback.open_read(key)
+
+    # ---- 删除 ----
+    def delete(self, key: str) -> None:
+        # 写入回落到本地后，删除也要同时清本地
+        try:
+            self._primary.delete(key)
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning("primary delete({}) failed, will still try local: {}", key, e)
+        try:
+            self._fallback.delete(key)
+        except Exception:
+            pass
+
+    def delete_prefix(self, prefix: str) -> int:
+        n = 0
+        try:
+            n += self._primary.delete_prefix(prefix)
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning("primary delete_prefix({}) failed, fallback to local: {}", prefix, e)
+        try:
+            n += self._fallback.delete_prefix(prefix)
+        except Exception:
+            pass
+        return n
+
+    # ---- 元信息 ----
+    def exists(self, key: str) -> bool:
+        if self._primary.exists(key):
+            return True
+        try:
+            return self._fallback.exists(key)
+        except Exception:
+            return False
+
+    def list_prefix(self, prefix: str) -> Iterable[str]:
+        seen: set[str] = set()
+        try:
+            for k in self._primary.list_prefix(prefix):
+                seen.add(k)
+                yield k
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning("primary list_prefix({}) failed, fallback to local: {}", prefix, e)
+        try:
+            for k in self._fallback.list_prefix(prefix):
+                if k not in seen:
+                    yield k
+        except Exception:
+            pass
+
+    def public_url(self, key: str) -> str:
+        # 公开 URL 仍优先用 S3 风格；若 S3 不可达则 fallback 给出 /api/event-files/<key>
+        try:
+            return self._primary.public_url(key)
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            return self._fallback.public_url(key)
+
+    def backend_name(self) -> str:
+        return f"{self._primary.backend_name()}+fallback({self._fallback.backend_name()})"
+
+
 def get_storage() -> Storage:
-    """按 settings 返回当前存储后端单例。"""
+    """按 settings 返回当前存储后端单例。
+
+    当 storage_backend=s3 时，自动套一层 FallbackStorage，s3 不可达时
+    静默回落到本地 data/ 目录，避免 CRUD 直接 500。
+    """
     global _storage
     if _storage is not None:
         return _storage
     if settings.storage_backend == "s3":
-        _storage = S3Storage(
+        primary = S3Storage(
             endpoint_url=settings.s3_endpoint_url,
             access_key=settings.s3_access_key,
             secret_key=settings.s3_secret_key,
@@ -367,7 +533,13 @@ def get_storage() -> Storage:
             public_base_url=settings.s3_public_base_url or None,
             presign_expires=settings.s3_presign_expires,
         )
-        logger.info("Storage: S3-compatible ({}://{}/{})", settings.s3_endpoint_url, settings.s3_bucket, '')
+        fallback = LocalStorage(settings.storage_local_root)
+        _storage = FallbackStorage(primary, fallback)
+        logger.info(
+            "Storage: S3-compatible ({}://{}/{}) with local fallback to {}",
+            settings.s3_endpoint_url, settings.s3_bucket, '',
+            settings.storage_local_root,
+        )
     elif settings.storage_backend == "local":
         _storage = LocalStorage(settings.storage_local_root)
         logger.info("Storage: local ({})", settings.storage_local_root)
