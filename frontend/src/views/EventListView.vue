@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
-import { deleteEvent, listEvents, type EventSummary } from '@/api/events'
+import { deleteEvent, listEvents, updateEvent, type EventSummary } from '@/api/events'
 
 const router = useRouter()
 const items = ref<EventSummary[]>([])
@@ -62,6 +62,33 @@ function statusLabel(s: string) {
   }[s] || s
 }
 
+async function changeStatus(row: EventSummary, status: EventSummary['status']) {
+  if (row.status === status) {
+    editingStatusId.value = null
+    return
+  }
+  const prev = row.status
+  row.status = status
+  try {
+    await updateEvent(row.id, { status })
+    ElMessage.success('已更新')
+  } catch (e: any) {
+    row.status = prev
+    ElMessage.error(e.message)
+  } finally {
+    editingStatusId.value = null
+  }
+}
+
+const statusOptions = [
+  { value: 'planned', label: '计划' },
+  { value: 'ongoing', label: '进行中' },
+  { value: 'done', label: '已完成' },
+  { value: 'cancelled', label: '已取消' },
+] as const
+
+const editingStatusId = ref<string | null>(null)
+
 onMounted(load)
 </script>
 
@@ -103,9 +130,31 @@ onMounted(load)
       <el-table-column label="全天" width="70">
         <template #default="{ row }">{{ row.all_day ? '是' : '否' }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column label="状态" width="120">
         <template #default="{ row }">
-          <el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          <el-select
+            v-if="editingStatusId === row.id"
+            :model-value="row.status"
+            size="small"
+            @change="(v: EventSummary['status']) => changeStatus(row, v)"
+            @blur="editingStatusId = null"
+          >
+            <el-option
+              v-for="o in statusOptions"
+              :key="o.value"
+              :value="o.value"
+              :label="o.label"
+            />
+          </el-select>
+          <el-tag
+            v-else
+            :type="statusType(row.status)"
+            size="small"
+            class="status-tag"
+            @click="editingStatusId = row.id"
+          >
+            {{ statusLabel(row.status) }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="标签" min-width="200">
@@ -127,4 +176,5 @@ onMounted(load)
 .event-list { max-width: 1200px; margin: 0 auto; }
 .link { color: var(--text); cursor: pointer; }
 .link:hover { color: var(--accent); }
+.status-tag { cursor: pointer; }
 </style>
