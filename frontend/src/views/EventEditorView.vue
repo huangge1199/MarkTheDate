@@ -139,10 +139,11 @@ async function save() {
     if (editing.value) {
       await updateEvent(editing.value.id, form.value, { fetch_session_id: sid })
       ElMessage.success('已保存')
+      router.push({ name: 'events' })
     } else {
-      const created = await createEvent(form.value, { fetch_session_id: sid })
+      await createEvent(form.value, { fetch_session_id: sid })
       ElMessage.success('已创建')
-      router.replace({ name: 'event-edit', params: { id: created.id } })
+      router.push({ name: 'events' })
     }
     fetchSessionId.value = null
   } catch (e: any) {
