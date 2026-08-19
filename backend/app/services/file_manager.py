@@ -46,9 +46,10 @@ def _to_naive_utc(dt: datetime) -> datetime:
 
 
 def _year_of(dt: datetime) -> int:
-    if dt.tzinfo is not None:
-        dt = dt.astimezone()
-    return dt.year
+    # naive datetime 视为 UTC（与 _to_naive_utc 写入策略一致），避免受 host 时区干扰
+    if dt.tzinfo is None:
+        return dt.year
+    return dt.astimezone(timezone.utc).year
 
 
 def _cross_years(start: datetime, end: Optional[datetime]) -> List[int]:
@@ -276,88 +277,122 @@ def create_event(session: Session, payload: EventCreate) -> EventOut:
 def update_event(
     session: Session, event_id: str, payload: EventUpdate
 ) -> Optional[EventOut]:
-    """更新活动：start 跨年迁移主份 key；end 等字段变化更新 meta。"""
+    """更新活动：start 跨年迁移主份 key；end 等字段变化更新 meta。
+
+    只真正修改 payload 中显式给出的字段；其他字段（特别是 start/end）保持
+    SQLite 索引与 .md frontmatter 原值不被覆盖，避免误改。
+    """
     storage = get_storage()
     idx = session.get(EventIndex, event_id)
     if not idx:
         return None
 
     old_key = event_md_key_from_index(idx)
-    # 读旧 meta+content
+    # ---- 决定要写到 frontmatter 的字段 ----
+    # 仅当用户显式提供时，才把对应字段同步到 .md 文件；其他字段保持原文件不动。
+    md_fields_to_change: dict = {}
+    if payload.title is not None:
+        md_fields_to_change["title"] = payload.title
+    if payload.start is not None:
+        md_fields_to_change["start"] = _to_naive_utc(payload.start)
+    if payload.end is not None:
+        md_fields_to_change["end"] = _to_naive_utc(payload.end)
+    if payload.all_day is not None:
+        md_fields_to_change["all_day"] = payload.all_day
+    if payload.status is not None:
+        md_fields_to_change["status"] = payload.status
+    if payload.tags is not None:
+        md_fields_to_change["tags"] = list(payload.tags)
+    if payload.color is not None:
+        md_fields_to_change["color"] = payload.color
+    if payload.source_url is not None:
+        # HttpUrl 不能直接被 YAML 序列化，需要转成 str
+        md_fields_to_change["source_url"] = str(payload.source_url)
+    if payload.reminders is not None:
+        md_fields_to_change["reminders"] = [r.model_dump(exclude_none=True) for r in payload.reminders]
+
+    # 读旧 meta+content（用于判断 end 是否需要删除、content 是否更新）
     try:
         old_bytes = storage.get_bytes(old_key)
     except FileNotFoundError:
         old_bytes = b""
     old_post = frontmatter.loads(old_bytes.decode("utf-8") if old_bytes else "")
     old_meta: dict = dict(old_post.metadata)
+    old_content = old_post.content
 
-    # 准备新 meta
-    new_meta = dict(old_meta)
-    new_content = old_post.content
-    if payload.title is not None:
-        new_meta["title"] = payload.title
-    if payload.start is not None:
-        new_meta["start"] = _to_naive_utc(payload.start)
-    if payload.end is not None:
-        new_meta["end"] = _to_naive_utc(payload.end)
-    elif "end" in new_meta:
-        del new_meta["end"]
-    if payload.all_day is not None:
-        new_meta["all_day"] = payload.all_day
-    if payload.status is not None:
-        new_meta["status"] = payload.status
-    if payload.tags is not None:
-        new_meta["tags"] = list(payload.tags)
-    if payload.color is not None:
-        new_meta["color"] = payload.color
-    elif "color" in new_meta and payload.color is None:
-        new_meta.pop("color", None)
-    if payload.source_url is not None:
-        new_meta["source_url"] = payload.source_url
-    if payload.reminders is not None:
-        new_meta["reminders"] = [r.model_dump(exclude_none=True) for r in payload.reminders]
+    # 特殊处理：end 显式置 None（前端发 null）→ 从 frontmatter 删除 end
+    if payload.end is None and "end" in old_meta and "end" not in md_fields_to_change:
+        md_fields_to_change["end"] = None  # 标记删除
+
+    # 特殊处理：color 显式清空 → 从 frontmatter 删除 color
+    if payload.color is None and "color" in old_meta and "color" not in md_fields_to_change:
+        md_fields_to_change["color"] = None
+
+    new_content = old_content
     if payload.content is not None:
         new_content = payload.content
 
-    new_start = new_meta["start"]
-    new_end = new_meta.get("end")
-    # slug 可能随 title 变
-    new_slug = _slugify(new_meta["title"])
-    new_year = _year_of(new_start)
-    target_key = event_md_key(new_year, new_slug)
-    if storage.exists(target_key) and target_key != old_key:
-        target_key = f"events/{new_year}/{new_slug}-{event_id[:8]}.md"
+    # ---- 决定主份 key（path） ----
+    target_key = old_key
+    if "title" in md_fields_to_change or "start" in md_fields_to_change:
+        new_meta_for_key = dict(old_meta)
+        new_meta_for_key.update(md_fields_to_change)
+        # end 标记为 None 时从推导 meta 中移除
+        if "end" in md_fields_to_change and md_fields_to_change["end"] is None:
+            new_meta_for_key.pop("end", None)
+        new_slug = _slugify(new_meta_for_key.get("title", idx.title))
+        new_year = _year_of(new_meta_for_key.get("start", idx.start_at))
+        candidate = event_md_key(new_year, new_slug)
+        if candidate != old_key and storage.exists(candidate):
+            candidate = f"events/{new_year}/{new_slug}-{event_id[:8]}.md"
+        target_key = candidate
 
-    new_meta["id"] = event_id
-    new_post = frontmatter.Post(new_content, **new_meta)
-    new_bytes = frontmatter.dumps(new_post).encode("utf-8")
-
-    # 写入新位置
-    storage.put_bytes(target_key, new_bytes)
-    # 删除旧位置
-    if old_key != target_key:
-        storage.delete(old_key)
+    # ---- 写 .md（仅当确实有字段变化或 content 变化） ----
+    if md_fields_to_change or payload.content is not None:
+        new_meta = dict(old_meta)
+        for k, v in md_fields_to_change.items():
+            if v is None:
+                new_meta.pop(k, None)
+            else:
+                new_meta[k] = v
+        new_meta["id"] = event_id
+        new_post = frontmatter.Post(new_content, **new_meta)
+        new_bytes = frontmatter.dumps(new_post).encode("utf-8")
+        storage.put_bytes(target_key, new_bytes)
         # 主份迁移后，_files 资产前缀也变了 — 把旧 _files 内容复制到新前缀
-        old_prefix = event_files_prefix_from_key(old_key)
-        new_prefix = event_files_prefix(new_year, new_slug)
-        if old_prefix != new_prefix:
-            _copy_prefix(storage, old_prefix, new_prefix)
-            storage.delete_prefix(old_prefix)
+        if old_key != target_key:
+            old_prefix = event_files_prefix_from_key(old_key)
+            new_prefix = event_files_prefix_from_key(target_key)
+            if old_prefix != new_prefix:
+                _copy_prefix(storage, old_prefix, new_prefix)
+                storage.delete_prefix(old_prefix)
+            storage.delete(old_key)
 
-    # 更新索引
-    idx.title = new_meta["title"]
-    idx.start_at = new_meta["start"]
-    idx.end_at = new_meta.get("end")
-    idx.all_day = bool(new_meta.get("all_day", False))
-    idx.status = new_meta.get("status", "planned")
-    idx.tags_json = _dump_tags(new_meta.get("tags") or [])
-    idx.color = new_meta.get("color")
-    idx.source_url = new_meta.get("source_url")
-    idx.file_path = target_key
+    # ---- 更新索引（只更新用户实际修改的字段） ----
+    if payload.title is not None:
+        idx.title = payload.title
+    if payload.start is not None:
+        idx.start_at = _to_naive_utc(payload.start)
+    if payload.end is not None:
+        idx.end_at = _to_naive_utc(payload.end)
+    if payload.all_day is not None:
+        idx.all_day = bool(payload.all_day)
+    if payload.status is not None:
+        idx.status = payload.status
+    if payload.tags is not None:
+        idx.tags_json = _dump_tags(payload.tags)
+    if payload.color is not None:
+        idx.color = payload.color
+    if payload.source_url is not None:
+        idx.source_url = str(payload.source_url)
+    if target_key != old_key:
+        idx.file_path = target_key
     session.add(idx)
     session.commit()
     session.refresh(idx)
-    return _build_event_out(target_key, new_meta, new_content)
+
+    # 返回最新视图（基于 idx + 文件原内容，前端能看到正确 start/end）
+    return _read_event_from_idx(idx)
 
 
 def event_files_prefix_from_key(md_key: str) -> str:
