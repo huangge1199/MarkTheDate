@@ -24,10 +24,14 @@ files_router = APIRouter(prefix="/api/event-files", tags=["event-files"])
 
 # ---- 抓取临时图片落地 ----
 
-_PREVIEW_URL_RE = re.compile(r"/api/fetch/preview/(?P<sid>[A-Za-z0-9_-]+)/(?P<name>[\w.\-]+)")
-# 整体匹配：![alt](/api/fetch/preview/<sid>/<name>)
+# fetch 接口把外链图下载到 storage（key = fetch/<sid>/<name>），并把正文里的 URL
+# 改写为 /api/event-files/fetch/<sid>/<name>；前端保存事件时把 session_id 一并传回，
+# 后端再把 fetch session 中的对象复制到 events/<year>/<slug>_files/，并把 URL
+# 改写为 /api/event-files/events/<year>/<slug>_files/<name>。
+_PREVIEW_URL_RE = re.compile(r"/api/event-files/fetch/(?P<sid>[A-Za-z0-9_-]+)/(?P<name>[\w.\-]+)")
+# 整体匹配：![alt](/api/event-files/fetch/<sid>/<name>)
 _IMG_PREVIEW_RE = re.compile(
-    r"!\[(?P<alt>[^\]]*)\]\(/api/fetch/preview/(?P<sid>[A-Za-z0-9_-]+)/(?P<name>[\w.\-]+)\)"
+    r"!\[(?P<alt>[^\]]*)\]\(/api/event-files/fetch/(?P<sid>[A-Za-z0-9_-]+)/(?P<name>[\w.\-]+)\)"
 )
 _SLUG_RE = re.compile(r"[^a-z0-9\u4e00-\u9fff]+", re.IGNORECASE)
 
