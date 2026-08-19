@@ -381,11 +381,33 @@ def delete_event(session: Session, event_id: str) -> bool:
     if not idx:
         return False
     md_key = event_md_key_from_index(idx)
-    # 主份删除
-    storage.delete(md_key)
+    # 主份删除（容忍异常：本地历史文件 / 不可达 S3 都可能删不到）
+    try:
+        storage.delete(md_key)
+    except Exception as e:
+        logger.warning("delete md key {} failed: {}", md_key, e)
     # 资产目录删除（按前缀）
     prefix = event_files_prefix_from_key(md_key)
-    storage.delete_prefix(prefix)
+    try:
+        storage.delete_prefix(prefix)
+    except Exception as e:
+        logger.warning("delete prefix {} failed: {}", prefix, e)
+    # 兼容历史本地路径：data\events\<year>\<slug>.md 与 data\events\<year>\<slug>_files\
+    # FallbackStorage 写入时会同时落到本地，删除时也会清本地；
+    # 但旧的 file_path 以 "data/" 开头，命中不到本地目录 keyspace，额外清理一次
+    raw = (idx.file_path or "").replace("\\", "/")
+    if raw.startswith("data/"):
+        legacy_key = raw[len("data/") :]
+        try:
+            storage.delete(legacy_key)
+        except Exception as e:
+            logger.warning("delete legacy {} failed: {}", legacy_key, e)
+        base = legacy_key[:-3] if legacy_key.endswith(".md") else legacy_key
+        legacy_prefix = f"{base}_files/"
+        try:
+            storage.delete_prefix(legacy_prefix)
+        except Exception as e:
+            logger.warning("delete legacy prefix {} failed: {}", legacy_prefix, e)
     session.delete(idx)
     session.commit()
     return True
