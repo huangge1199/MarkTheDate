@@ -140,11 +140,12 @@ if (-not (Test-Path $nodeModules)) {
 
 # ---- Start backend ----
 Write-Step ("Starting backend (" + $backendUrl + ") ...")
+$backendLog = Join-Path $backendDir "backend.log"
 $backendJob = Start-Job -ScriptBlock {
-    param($dir, $py)
+    param($dir, $py, $logPath)
     Set-Location $dir
-    & $py -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-} -ArgumentList $backendDir, $venvPython
+    & $py -m uvicorn app.main:app --host 0.0.0.0 --port 8000 *>> $logPath
+} -ArgumentList $backendDir, $venvPython, $backendLog
 
 # ---- Start frontend ----
 Write-Step ("Starting frontend (" + $frontendUrl + ") ...")
